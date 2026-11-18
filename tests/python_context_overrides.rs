@@ -13,3 +13,19 @@ fn context_override_wins_over_default_action() {
         "browser_impl"
     );
 }
+
+#[test]
+fn register_and_resolve_list_and_capture() {
+    let mut host = PythonCompatibilityHost::default();
+    host.register_list(
+        "user.letters",
+        vec!["a".to_string(), "b".to_string(), "c".to_string()],
+    );
+    host.register_capture("user.word", "(\\w+)");
+
+    assert_eq!(
+        host.list_values("user.letters").unwrap(),
+        ["a", "b", "c"]
+    );
+    assert_eq!(host.capture_signature("user.word").unwrap(), "(\\w+)");
+}

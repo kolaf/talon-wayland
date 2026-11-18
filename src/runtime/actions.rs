@@ -1,5 +1,6 @@
 use crate::mode::RuntimeMode;
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 /// Minimal resolved context used for action resolution.
 ///
@@ -83,14 +84,22 @@ pub fn register_builtin_actions(registry: &mut ActionRegistry) {
     registry.register_builtin("edit.copy");
 }
 
+
+static DEFAULT_REGISTRY: OnceLock<ActionRegistry> = OnceLock::new();
+
+fn default_registry() -> &'static ActionRegistry {
+    DEFAULT_REGISTRY.get_or_init(|| {
+        let mut r = ActionRegistry::default();
+        register_builtin_actions(&mut r);
+        r
+    })
+}
+
 /// Resolves an action by name within a resolved context.
 ///
 /// In v1, context does not affect builtin lookup; context-specific resolution lives in
 /// `PythonCompatibilityHost`.
-pub fn resolve_action(
-    registry: &ActionRegistry,
-    name: &str,
-    _context: &ResolvedContext,
-) -> Result<ActionHandle, ActionError> {
-    registry.resolve(name)
+pub fn resolve_action(name: &str, context: &ResolvedContext) -> Result<ActionHandle, ActionError> {
+    let _ = context;
+    default_registry().resolve(name)
 }
