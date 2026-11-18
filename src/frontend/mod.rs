@@ -3,3 +3,4 @@
 //! Task 1: module boundary only.
 
 pub mod status;
+pub mod focus;

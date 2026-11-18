@@ -1,5 +1,7 @@
 use core::fmt;
 
+pub use crate::frontend::focus::{infer_mode, ForegroundAppInfo, ForegroundDetector};
+
 /// High-level runtime mode.
 ///
 /// Note: dictation is out of scope for this project; modes are command-centric.
