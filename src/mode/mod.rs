@@ -5,7 +5,7 @@ pub use crate::frontend::focus::{infer_mode, ForegroundAppInfo, ForegroundDetect
 /// High-level runtime mode.
 ///
 /// Note: dictation is out of scope for this project; modes are command-centric.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum RuntimeMode {
     Global,
     Code,
