@@ -1,0 +1,15 @@
+[package]
+name = "voice-runtime"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+# Rust crates with hyphens are imported with underscores: `voice_runtime`
+name = "voice_runtime"
+path = "src/lib.rs"
+
+[[bin]]
+name = "voice-runtime"
+path = "src/main.rs"
+
+[dependencies]
