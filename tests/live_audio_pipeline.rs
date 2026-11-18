@@ -1,13 +1,16 @@
 use std::collections::VecDeque;
 use std::f32::consts::PI;
 use voice_runtime::app::RuntimeApp;
-use voice_runtime::config::{load_selected_audio_device, save_selected_audio_device};
+use voice_runtime::config::{
+    load_selected_audio_device, load_selected_model, save_selected_audio_device,
+    save_selected_model,
+};
 use voice_runtime::mode::RuntimeMode;
 use voice_runtime::speech::{
-    downmix_to_mono, frame_rms, load_wav_16khz_mono, normalize_command_transcript,
-    rank_transcript_candidates, resample_linear_16khz, resolve_input_device_selector,
-    AudioDeviceInfo, SpeechCandidate, SpeechEngine, SpeechError, UtteranceSegmenter, VadConfig,
-    TARGET_SAMPLE_RATE,
+    discover_models_in_roots, downmix_to_mono, frame_rms, load_wav_16khz_mono,
+    normalize_command_transcript, rank_transcript_candidates, resample_linear_16khz,
+    resolve_input_device_selector, AudioDeviceInfo, SpeechCandidate, SpeechEngine, SpeechError,
+    UtteranceSegmenter, VadConfig, TARGET_SAMPLE_RATE,
 };
 
 struct MockSpeechEngine {
@@ -255,6 +258,62 @@ fn audio_device_selection_persists_and_clears_in_config_dir() {
 
     save_selected_audio_device(None, Some(&dir)).unwrap();
     assert_eq!(load_selected_audio_device(Some(&dir)), None);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn discovers_huggingface_hub_conformer_models_and_excludes_vad() {
+    let root = std::env::temp_dir().join(format!(
+        "voice_runtime_hf_models_{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+
+    let hf_parakeet = root.join(
+        "models--handy-computer--parakeet-tdt-0.6b-v2-gguf/snapshots/abc123",
+    );
+    let hf_blobs = root.join("models--handy-computer--parakeet-tdt-0.6b-v2-gguf/blobs");
+    let whisper_dir = root.join("whisper");
+    let vad_dir = root.join("vad");
+
+    std::fs::create_dir_all(&hf_parakeet).unwrap();
+    std::fs::create_dir_all(&hf_blobs).unwrap();
+    std::fs::create_dir_all(&whisper_dir).unwrap();
+    std::fs::create_dir_all(&vad_dir).unwrap();
+
+    let parakeet_file = hf_parakeet.join("parakeet-tdt-0.6b-v2-Q8_0.gguf");
+    let whisper_file = whisper_dir.join("ggml-base.en.bin");
+    let vad_file = vad_dir.join("silero-vad-v6.2.gguf");
+    let blob_file = hf_blobs.join("deadbeef0000");
+
+    std::fs::write(&parakeet_file, b"gguf").unwrap();
+    std::fs::write(&whisper_file, b"ggml").unwrap();
+    std::fs::write(&vad_file, b"vad").unwrap();
+    std::fs::write(&blob_file, b"blob").unwrap();
+
+    let discovered = discover_models_in_roots(std::slice::from_ref(&root));
+    assert_eq!(discovered, vec![parakeet_file, whisper_file]);
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn speech_model_selection_persists_and_clears_in_config_dir() {
+    let dir = std::env::temp_dir().join(format!(
+        "voice_runtime_model_cfg_{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert_eq!(load_selected_model(Some(&dir)), None);
+
+    let model = std::path::PathBuf::from("/tmp/parakeet-tdt-0.6b-v2-Q8_0.gguf");
+    save_selected_model(Some(&model), Some(&dir)).unwrap();
+    assert_eq!(load_selected_model(Some(&dir)), Some(model));
+
+    save_selected_model(None, Some(&dir)).unwrap();
+    assert_eq!(load_selected_model(Some(&dir)), None);
 
     let _ = std::fs::remove_dir_all(&dir);
 }

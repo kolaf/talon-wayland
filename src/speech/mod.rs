@@ -18,6 +18,6 @@ pub use matcher::{
     phrase_inventory_for_mode_with_host,
 };
 pub use transcribe_engine::{
-    discover_default_model_path, normalize_command_transcript, rank_transcript_candidates,
-    TranscribeCppEngine,
+    discover_available_models, discover_default_model_path, discover_models_in_roots,
+    normalize_command_transcript, rank_transcript_candidates, TranscribeCppEngine,
 };

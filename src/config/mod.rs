@@ -160,3 +160,42 @@ pub fn load_selected_repositories(custom_dir: Option<&Path>) -> Vec<PathBuf> {
         .map(PathBuf::from)
         .collect()
 }
+
+/// Returns the file path used to persist the selected speech model path.
+pub fn selected_model_file(custom_dir: Option<&Path>) -> PathBuf {
+    resolve_config_dir(custom_dir).join("selected_model")
+}
+
+/// Persists the selected speech model path (or clears it when `None`/empty).
+pub fn save_selected_model(
+    model: Option<&Path>,
+    custom_dir: Option<&Path>,
+) -> std::io::Result<PathBuf> {
+    let path = selected_model_file(custom_dir);
+    match model.filter(|p| !p.as_os_str().is_empty()) {
+        Some(model_path) => {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&path, format!("{}\n", model_path.display()))?;
+        }
+        None => {
+            if path.exists() {
+                std::fs::remove_file(&path)?;
+            }
+        }
+    }
+    Ok(path)
+}
+
+/// Loads the previously persisted speech model path, if configured.
+pub fn load_selected_model(custom_dir: Option<&Path>) -> Option<PathBuf> {
+    let path = selected_model_file(custom_dir);
+    let content = std::fs::read_to_string(path).ok()?;
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(trimmed))
+    }
+}

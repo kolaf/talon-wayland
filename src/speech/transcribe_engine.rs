@@ -1,3 +1,4 @@
+use crate::config::load_selected_model;
 use crate::speech::audio::{MicrophoneCapture, VadConfig};
 use crate::speech::candidate::SpeechCandidate;
 use crate::speech::engine::{SpeechEngine, SpeechError};
@@ -9,51 +10,129 @@ use transcribe_cpp::{
 
 const MAX_BIAS_PHRASES: usize = 128;
 
-/// Searches environment configuration and standard Linux model directories for a local `.gguf`
-/// speech model (excluding VAD/Silero models).
-pub fn discover_default_model_path() -> Option<PathBuf> {
+/// Searches `VOICE_RUNTIME_MODEL`, persisted model selection, Hugging Face Hub cache
+/// (`$HF_HOME/hub`, `~/.cache/huggingface/hub`), Handy cache/data directories, and `./models`
+/// for local `.gguf` and `ggml-*.bin` speech models (prioritizing Conformer/Parakeet models).
+pub fn discover_available_models() -> Vec<PathBuf> {
+    let mut prioritized = Vec::new();
+    let mut seen = HashSet::new();
+
     if let Ok(env_path) = std::env::var("VOICE_RUNTIME_MODEL") {
         let trimmed = env_path.trim();
         if !trimmed.is_empty() {
             let p = PathBuf::from(trimmed);
-            if p.is_file() {
-                return Some(p);
+            if p.is_file() && seen.insert(p.clone()) {
+                prioritized.push(p);
             }
         }
     }
 
+    if let Some(saved) = load_selected_model(None) {
+        if saved.is_file() && seen.insert(saved.clone()) {
+            prioritized.push(saved);
+        }
+    }
+
+    let roots = default_model_search_roots();
+    for model in discover_models_in_roots(&roots) {
+        if seen.insert(model.clone()) {
+            prioritized.push(model);
+        }
+    }
+
+    prioritized
+}
+
+/// Returns the highest-priority discovered local speech model, if any.
+pub fn discover_default_model_path() -> Option<PathBuf> {
+    discover_available_models().into_iter().next()
+}
+
+/// Scans `roots` recursively (up to depth 5) for `.gguf` and `ggml-*.bin` speech models,
+/// excluding VAD/Silero models and sorting Conformer/Parakeet models first.
+pub fn discover_models_in_roots(roots: &[PathBuf]) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    for root in roots {
+        if root.exists() {
+            collect_model_files(root, 0, 5, &mut found);
+        }
+    }
+
+    found.sort_by(|a, b| {
+        model_priority_rank(a)
+            .cmp(&model_priority_rank(b))
+            .then_with(|| a.cmp(b))
+    });
+
+    let mut deduped = Vec::new();
+    let mut seen = HashSet::new();
+    for path in found {
+        if seen.insert(path.clone()) {
+            deduped.push(path);
+        }
+    }
+    deduped
+}
+
+fn default_model_search_roots() -> Vec<PathBuf> {
     let mut roots: Vec<PathBuf> = Vec::new();
+
+    if let Ok(hf_home) = std::env::var("HF_HOME") {
+        let trimmed = hf_home.trim();
+        if !trimmed.is_empty() {
+            roots.push(PathBuf::from(trimmed).join("hub"));
+        }
+    }
+    if let Ok(xdg_cache) = std::env::var("XDG_CACHE_HOME") {
+        let base = PathBuf::from(xdg_cache);
+        roots.push(base.join("huggingface/hub"));
+        roots.push(base.join("com.pais.handy"));
+        roots.push(base.join("handy"));
+        roots.push(base.join("voice-runtime"));
+    }
     if let Ok(xdg_data) = std::env::var("XDG_DATA_HOME") {
         let base = PathBuf::from(xdg_data);
         roots.push(base.join("com.pais.handy"));
         roots.push(base.join("handy"));
         roots.push(base.join("voice-runtime"));
     }
+    if let Ok(xdg_config) = std::env::var("XDG_CONFIG_HOME") {
+        let base = PathBuf::from(xdg_config);
+        roots.push(base.join("com.pais.handy"));
+    }
     if let Ok(home) = std::env::var("HOME") {
         let home_dir = PathBuf::from(home);
+        let cache = home_dir.join(".cache");
+        roots.push(cache.join("huggingface/hub"));
+        roots.push(cache.join("com.pais.handy"));
+        roots.push(cache.join("handy"));
+        roots.push(cache.join("voice-runtime"));
+
         let data = home_dir.join(".local/share");
         roots.push(data.join("com.pais.handy"));
         roots.push(data.join("handy"));
         roots.push(data.join("voice-runtime"));
 
-        let cache = home_dir.join(".cache");
-        roots.push(cache.join("handy"));
-        roots.push(cache.join("voice-runtime"));
+        roots.push(home_dir.join(".config/com.pais.handy"));
     }
     roots.push(PathBuf::from("models"));
-
-    let mut found = Vec::new();
-    for root in roots {
-        if root.exists() {
-            collect_gguf_models(&root, 0, 3, &mut found);
-        }
-    }
-
-    found.sort();
-    found.into_iter().next()
+    roots
 }
 
-fn collect_gguf_models(dir: &Path, depth: usize, max_depth: usize, out: &mut Vec<PathBuf>) {
+fn model_priority_rank(path: &Path) -> u8 {
+    let lower = path.to_string_lossy().to_ascii_lowercase();
+    if lower.contains("parakeet") || lower.contains("conformer") {
+        0
+    } else if lower.contains("moonshine") || lower.contains("canary") {
+        1
+    } else if lower.ends_with(".gguf") {
+        2
+    } else {
+        3
+    }
+}
+
+fn collect_model_files(dir: &Path, depth: usize, max_depth: usize, out: &mut Vec<PathBuf>) {
     if depth > max_depth {
         return;
     }
@@ -63,18 +142,26 @@ fn collect_gguf_models(dir: &Path, depth: usize, max_depth: usize, out: &mut Vec
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            collect_gguf_models(&path, depth + 1, max_depth, out);
-        } else if path
-            .extension()
-            .and_then(|e| e.to_str())
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("gguf"))
-        {
+            let dir_name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            if matches!(dir_name, "blobs" | "refs" | ".git") {
+                continue;
+            }
+            collect_model_files(&path, depth + 1, max_depth, out);
+        } else if path.is_file() {
             let name = path
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("")
                 .to_ascii_lowercase();
-            if !name.contains("silero") && !name.contains("vad") {
+            if name.contains("silero") || name.contains("vad") {
+                continue;
+            }
+            let is_gguf = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("gguf"));
+            let is_whisper_bin = name.starts_with("ggml-") && name.ends_with(".bin");
+            if is_gguf || is_whisper_bin {
                 out.push(path);
             }
         }
