@@ -1,6 +1,6 @@
-//! Frontend layer (hotkeys, Wayland integration, UI surface if any).
-//!
-//! Task 1: module boundary only.
+//! Frontend layer (hotkeys/IPC, GTK3 GUI, Wayland integration, status).
 
-pub mod status;
 pub mod focus;
+pub mod gui;
+pub mod ipc;
+pub mod status;

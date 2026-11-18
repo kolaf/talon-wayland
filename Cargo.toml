@@ -13,3 +13,9 @@ name = "voice-runtime"
 path = "src/main.rs"
 
 [dependencies]
+cpal = "0.18.2"
+glib = "0.18.5"
+gtk = "0.18.2"
+hound = "3.5.1"
+pyo3 = { version = "0.23", features = ["auto-initialize"] }
+transcribe-cpp = { version = "0.4.0", default-features = false }

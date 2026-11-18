@@ -144,38 +144,37 @@ The first version should support the smallest Talon subset that makes the chosen
 
 Support:
 
-- context headers for:
-  - `app`
-  - `app.name`
-  - `os`
-  - `mode`
-  - `tag`
-  - `code.language` where needed for coding grammars
-- command definitions
-- command bodies with action invocation
-- tag activation in file bodies
-- settings blocks only where needed by the target grammar sets
+- both headered `.talon` files (with a `-` separator) and **headerless `.talon` files** (no `-` separator; body starts on line 1)
+- separation between Talon's `mode:` context header (`command`, `dictation`, `sleep`, `all`) and the runtime's `RuntimeMode` (`Global`, `Code`, `Browser`, `Terminal`), filtering out non-command modes (`dictation`, `sleep`) and non-Linux OS contexts (`os: windows`, `os: mac`)
+- community context headers and modifiers:
+  - `app`, `app.name`, `app.exe`, `app.bundle`
+  - `title` (including `/regex/` patterns)
+  - `os`, `mode`, `tag`, `code.language`, `hostname`
+  - `not tag`, `not mode`, and `and` header modifiers
+- **transitive tag activation**: top-level `tag(): <name>` statements in `.talon` bodies activate tags whenever that file's context header matches, enabling tag-gated files (`tag: user.tabs`, `tag: user.splits`, `tag: browser`, `tag: terminal`, `tag: user.cursorless`, etc.)
+- `settings():` blocks parsed into structured file settings rather than failing file load; out-of-scope hardware/noise event triggers (`gamepad(...)`, `parrot(...)`, `noise(...)`, `face(...)`, `deck(...)`) skipped with structured diagnostics instead of aborting repository loading
+- spoken rule parsing into a **`SpokenRule` AST** supporting literals, lists (`{user.letter}`), captures (`<user.cursorless_target>`, `<number_small>`), optionals (`[...]`), alternations (`(a | b)`), repetitions (`+`, `*`), and anchors (`^`, `$`)
+- community command bodies: quote- and parenthesis-aware argument lexing, single- and double-quoted strings with escapes and `{var}` string interpolation, nested action calls, local variable assignments (`x = user.foo(...)`), and basic arithmetic/concatenation (`number_small - 1`)
 
 Not required initially:
 
 - broad hotkey reimplementation beyond mode switching
 - arbitrary desktop-level mouse actions
-- uncommon context header features not used by the chosen repositories
+- hardware/noise triggers (`parrot`, `gamepad`, `face`, `deck`)
 
 #### Python compatibility subset
 
-Support a practical subset of Talon's Python API patterns used heavily by the chosen repositories:
+Use **in-process embedded Python 3 via `pyo3`** hosting a synthetic `talon` Python package (`Module`, `Context`, `actions`, `settings`, `app`, `clip`, `ui`, `cron`, `imgui`, `registry`, `scope`, `speech_system`) so real `.py` files from `talonhub/community`, `cursorless-talon`, and `rango-talon` execute natively in Python while delegating primitive actions back to Rust:
 
-- `Module`
-- `Context`
-- user action declarations
-- action overrides by context
-- lists / captures needed by the selected repositories
-- a stable `actions.*` call surface for the supported command families
+- `Module` (`list`, `tag`, `setting`, `mode`, `@mod.capture`, `@mod.action_class`, `@mod.action`)
+- `Context` (`ctx.matches`, `ctx.lists[...]`, `ctx.tags`, `ctx.settings`, `@ctx.action_class`, `@ctx.capture`)
+- CSV-loaded list population and Python capture transformation functions (including Cursorless and Rango target builders)
+- context-matched action overrides (`@ctx.action_class`) evaluated against the active `RuntimeMode` and tags
+- a bridged `actions.*` call surface routing primitive actions (`key`, `insert`, `sleep`, `edit.*`, and backend bridges) back into the Rust runtime
 
 Out of scope initially:
 
-- broad UI/canvas APIs
+- full GUI canvas rendering (`imgui` / Skia drawing beyond compatibility stubs)
 - eye tracker APIs
 - advanced desktop/window inspection APIs outside the needs of the three workflows
 

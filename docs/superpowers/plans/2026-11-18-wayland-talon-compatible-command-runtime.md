@@ -6,7 +6,7 @@
 
 **Architecture:** The runtime is a Rust-first daemon/application with a Talon-compatible grammar and action layer, plus app-specific backends for VS Code, browser, and terminal control. It uses automatic mode selection from foreground-app detection when available and falls back to explicit mode switching when not, while keeping dictation out of scope because Handy already covers that job.
 
-**Tech Stack:** Rust core runtime, TypeScript UI/extension glue where needed, VS Code extension integration, browser-extension messaging, Wayland-native desktop integration, command-oriented local speech engine adapter.
+**Tech Stack:** Rust core runtime, embedded Python 3 (`pyo3`) host for the synthetic `talon` compatibility package, TypeScript UI/extension glue where needed, VS Code extension integration, browser-extension messaging, Wayland-native desktop integration, command-oriented local speech engine adapter.
 
 **Spec:** `docs/superpowers/specs/2026-11-18-wayland-talon-compatible-command-runtime-design.md`
 
@@ -235,8 +235,12 @@ git commit -m "feat: add foreground-driven mode routing"
   - `pub struct TalonFile`
   - `pub struct TalonContextHeader`
   - `pub struct TalonCommand`
+  - `pub struct SpokenRule`
+  - `pub enum SpokenToken`
   - `pub enum TalonBodyStmt`
   - `pub fn parse_talon_file(source: &str) -> Result<TalonFile, TalonParseError>`
+  - `pub fn parse_context_matches(source: &str) -> Result<TalonContextHeader, TalonParseError>`
+  - `pub fn parse_spoken_rule(spoken: &str) -> Result<SpokenRule, TalonParseError>`
   - `pub struct CommandInventory`
   - `pub fn load_inventory(paths: &[PathBuf]) -> Result<CommandInventory, InventoryError>`
   - `pub fn commands_for_mode(&self, mode: RuntimeMode) -> Vec<&TalonCommand>`
@@ -274,12 +278,13 @@ Expected: FAIL because parser and inventory APIs do not exist yet
 
 - [ ] **Step 3: Implement the supported `.talon` subset and inventory loader**
 
-Support only the subset named in the spec:
-- context headers for `app`, `app.name`, `os`, `mode`, `tag`, and `code.language`
-- command definitions
-- command bodies containing action invocations and tag activation needed by supported repos
-
-Do not guess unsupported constructs; return explicit parse or support errors for features outside the subset.
+Support the community-compatible `.talon` subset named in the spec:
+- both headered `.talon` files (`-` separator) and headerless `.talon` files (no `-` separator)
+- extended context headers (`app`, `app.name`, `app.exe`, `app.bundle`, `title`, `hostname`, `os`, `mode`, `not mode`, `tag`, `not tag`, `code.language`, and `and` modifiers), distinguishing Talon's `mode: command`/`dictation`/`sleep`/`all` from `RuntimeMode`
+- `SpokenRule` AST parsing for literals, lists (`{user.letter}`), captures (`<user.cursorless_target>`), optionals (`[...]`), alternations (`(a | b)`), repetitions (`+`, `*`), and anchors (`^`, `$`)
+- top-level `settings():` blocks, top-level `tag():` activations, quote/escape/paren-aware argument lexing, nested action calls, string interpolation/escapes, and local variable assignments in command bodies
+- transitive tag activation and OS/mode filtering in `CommandInventory::commands_for_mode`
+- explicit parse errors for genuinely invalid headers or malformed statements; structured diagnostics when skipping out-of-scope hardware/noise event triggers during repository loading
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -312,6 +317,11 @@ git commit -m "feat: add talon grammar subset parser"
   - `pub fn register_builtin_actions(registry: &mut ActionRegistry)`
   - `pub struct PythonCompatibilityHost`
   - `pub fn load_python_module(path: &Path) -> Result<(), PythonHostError>`
+  - `pub fn load_python_module_to_host(path: &Path) -> Result<PythonCompatibilityHost, PythonHostError>`
+  - `pub fn load_python_source(&mut self, source: &str, module_name: &str) -> Result<(), PythonHostError>`
+  - `pub fn invoke_action(&self, name: &str, mode: RuntimeMode, args: &[String]) -> Result<Option<String>, PythonHostError>`
+  - `pub fn invoke_capture(&self, name: &str, mode: RuntimeMode, matched_words: &[String]) -> Result<String, PythonHostError>`
+  - `pub fn list_mapping(&self, name: &str) -> Option<&HashMap<String, String>>`
   - `pub fn resolve_action(name: &str, context: &ResolvedContext) -> Result<ActionHandle, ActionError>`
 
 - [ ] **Step 1: Write the failing tests for action registration and context override resolution**
@@ -343,12 +353,12 @@ Expected: FAIL because the action system does not exist yet
 
 - [ ] **Step 3: Implement the supported Talon action/Python subset**
 
-Implement only the Python/Talon constructs needed by the chosen compatibility sources:
-- module-defined actions
-- context overrides
-- list/capture registration needed by supported grammars
+Host an in-process Python 3 interpreter via `pyo3` providing a synthetic `talon` compatibility package (`Module`, `Context`, `actions`, `settings`, `app`, `clip`, `ui`, `cron`, `imgui`, `registry`, `scope`, `speech_system`) so real `.py` files from `talonhub/community`, `cursorless-talon`, and `rango-talon` execute directly:
+- `@mod.action_class`, `@mod.action`, `@mod.capture`, `mod.list`, `mod.tag`, `mod.setting`, `mod.mode`
+- `ctx.matches` parsed into `TalonContextHeader`, `ctx.lists[...]` dict/list extraction, `ctx.tags`, `ctx.settings`, `@ctx.action_class` context overrides, and `@ctx.capture`
+- execution of Python action implementations and capture functions with `actions.*` calls bridged back to Rust primitives and context-resolved overrides
 
-Keep this behind a host layer so a future embedded Python engine can be replaced or narrowed without rewriting the runtime.
+Keep this behind `PythonCompatibilityHost` so the runtime stays decoupled from raw PyO3 types.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -412,7 +422,7 @@ Expected: FAIL because the speech matching APIs do not exist yet
 
 - [ ] **Step 3: Implement the speech-engine adapter and phrase-matching layer**
 
-Do not bind to a specific model yet. Build the runtime-facing abstraction that accepts a mode-specific phrase inventory and returns matched commands. The matching layer should fail clearly when no command candidate is supported rather than guessing a dictation-like fallback.
+Do not bind to a specific model yet. Build the runtime-facing abstraction that accepts a mode-specific phrase inventory and returns matched commands. `phrase_inventory_for_mode` and `best_command_match` should expand and match `SpokenRule` ASTs using registered lists and captures from `PythonCompatibilityHost` alongside exact literal phrases. The matching layer should fail clearly when no command candidate is supported rather than guessing a dictation-like fallback.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
